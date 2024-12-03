@@ -1,0 +1,106 @@
+import time
+import urllib.parse
+import pyodbc
+import pandas as pd
+import psycopg2
+from sqlalchemy import create_engine
+
+# SQL Server Connection
+sql_server_connection = (
+    "DRIVER={ODBC Driver 17 for SQL Server};"
+    "SERVER=127.0.0.1;"  # SQL Server hostname or IP
+    "DATABASE=Test;"  # SQL Server database name
+    "Trusted_Connection=yes;"  # Using Windows Authentication
+)
+
+# PostgreSQL Connection Configuration
+postgres_connection = {
+    "host": "127.0.0.1",  # PostgreSQL hostname or IP
+    "database": "Test",  # PostgreSQL database name
+    "user": "usrTest",  # PostgreSQL username
+    "password": "1234",  # PostgreSQL password
+}
+
+csv_file_path = "file_data.csv"
+#Set bloksize to read
+chunk_size = 100000
+#********************************************************************************************************************************************************
+# Step 1: Extract data from SQL Server and save as a CSV
+try:
+    # Connect to SQL Server
+    connection = pyodbc.connect(sql_server_connection)
+    print("Successfully connected to SQL Server.")
+    
+    # SQL Query to extract data
+    query = """
+        select * from sometable;      
+    """    
+    # Read data into a pandas by blocks    
+    start_time = time.time()        
+    with open(csv_file_path, 'w', newline='', encoding='utf-8') as f:
+        for i, chunk in enumerate(pd.read_sql(query, connection, chunksize=chunk_size)):
+            chunk.to_csv(f, header=(i == 0), index=False)
+    end_time = time.time()
+    print("Time reading SQL: " + str(end_time-start_time))
+    print("Data successfully extracted.") 
+ 
+except Exception as e:
+    print("Error connecting to SQL Server:", e)
+ 
+finally:
+    # Close the connection
+    if 'connection' in locals() and connection:
+        connection.close()
+        print("SQL Server connection closed.")
+
+#********************************************************************************************************************************************************
+#Set bloksize to write
+chunk_size = 15000
+# Step 2: Truncate table in PostgreSQL
+try:
+    # Create psycopg2 connection for PostgreSQL
+    connection = psycopg2.connect(host=postgres_connection["host"], database=postgres_connection["database"], user=postgres_connection["user"], password=postgres_connection["password"])
+    cursor = connection.cursor()
+    print("Truncate table data.sometable")
+    cursor.execute('truncate table data."sometable"')
+    connection.commit()
+
+except Exception as e:
+    print("Error connecting to postgresql:", e)
+ 
+finally:
+    # Close the connection
+    if 'connection' in locals() and connection:
+        connection.close()
+        print("PostGres connection closed.")
+ 
+# Step 3: Insert data into PostgreSQL
+try:
+    # URL encode the password to handle special characters
+    password_encoded = urllib.parse.quote_plus(postgres_connection["password"])
+ 
+    # Create SQLAlchemy engine for PostgreSQL
+    engine = create_engine(
+        f"postgresql+psycopg2://{postgres_connection['user']}:{password_encoded}@"
+        f"{postgres_connection['host']}/{postgres_connection['database']}"
+    )
+ 
+    # Insert data into PostgreSQL table
+    with engine.connect() as connection:
+        print("Successfully connected to PostgreSQL.")
+        # Insert the data into the specified schema and table
+        start_time = time.time()
+        for chunk in pd.read_csv(csv_file_path, chunksize=chunk_size):
+                chunk.to_sql(name="sometable", con=engine, schema="data", if_exists='append', index=False)            
+        end_time = time.time()
+        print("Time wrinting Postgres: " + str(end_time-start_time))        
+        print("Data successfully inserted into PostgreSQL table 'Data.sometable'.")
+ 
+except Exception as e:
+    print("*** Error inserting data into PostgreSQL:", e)
+ 
+finally:
+    # Clean up the engine connection
+    if 'engine' in locals():
+        engine.dispose()
+        print("PostgreSQL connection closed.")
